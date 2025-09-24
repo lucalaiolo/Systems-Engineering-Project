@@ -1,0 +1,25 @@
+Per ogni magazzino abbiamo:
+	- quali locker soddisfa 
+	- quanti veicoli ha a disposizione, con le rispettive capacità
+	- la route che un veicolo segue ogni volta che si effettua una consegna (assunzione (delle balle) --> 	fanno sempre lo stesso percorso, anche se ci sono locker a cui non devono consegnare)
+	- i veicoli partono o quando sono pieni oppure ogni tot tempo (3 ore? no idea)
+	- processing rate degli ordini (in pratica il magazzino è una coda M/M/1 in cui gli arrivi sono 	deterministici perché presi dalla tabella ordini che forse avremo prima o poi). Forse i tempi di servizio 	non sono davvero esponenziali perché il tempo di lavorazione di un ordine non ha motivo di essere	senza memoria (roba matematica)
+	- capacità magazzino nel senso di numero massimo di pezzi lavorati ogni x ore (???????)
+	- costi di apertura
+
+Per ogni locker abbiamo:
+	- capacità massima in termini di numero di pacchi massimi dentro al locker. Che succede se arriva il 	camion e deve consegnare un pacco a un locker pieno? Assunzione: si tiene il pacco, continua per la sua 	strada, scaricando i pacchi che può nei locker giusti. Torna al magazzino coi pacchi che non ha consegnato 	e al prossimo giro riprova a consegnarli. 
+	- arrival rate dei clienti a ritirare i pacchi, inter arrival times esponenziali vanno bene
+	- service rate ai locker, quanto effettivamente ci mettono in media i disperati a ritirare i pacchi. Non è 	esponenziale, bisogna pensarci un po'
+
+Da tracciare:
+	- costi (apertura magazzino + costi di trasporto)
+	- lunghezza media coda per processare ordini in ciascun magazzino (ci dà un'idea di quanto siamo 	schiavisti)
+	- carico medio dei veicoli (cioè, ogni volta che un veicolo parte si registra con quanti pacchi è partito 	ecc, poi si fa una media. Se è bassa probabilmente o non siamo schiavisti abbastanza dentro al magazzino o 	non c'è bisogno di così tanti veicoli oppure la route che il veicolo segue è composta da locker che 	ricevono pochi ordini) 
+	- media carico dei locker (quanto son pieni)
+	- per ogni ordine, timestamp di consegna al locker e timestamp in cui il disperato ritira il pacco. Da qui 	possiamo fare qualche grafico e vedere l'andamento dei ritardi su base 	stagionale (ci aspettiamo un 	macello in settimane tipo quella di natale)
+
+basta :))
+
+	
+	
