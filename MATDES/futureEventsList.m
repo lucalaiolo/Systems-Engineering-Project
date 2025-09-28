@@ -1,112 +1,156 @@
 classdef futureEventsList < handle
-
-    % Implements a priority queue using a binary heap to manage a list of 
-    % event objects. Events are dequeued according to their simulation clocks,
-    % so that the earliest event is always the first one processed.
-
-    properties
-        events_heap
-        heapsize
-    end
     
+    properties (Access = private, Constant)
+        DEFAULT_CAPACITY = 16;
+    end
+
+    properties (Access = private)
+        events_heap      % Cell array of event handles
+        eventClocks      % Cached clock values for the heap
+        heapsize         % Number of valid elements in the heap
+        capacity         % Allocated capacity for the heap arrays
+    end
+
     methods
         %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
         % Constructor
         function obj = futureEventsList()
-            obj.events_heap = event.empty;
+            obj.capacity = obj.DEFAULT_CAPACITY;
+            obj.events_heap = cell(obj.capacity, 1);
+            obj.eventClocks = zeros(obj.capacity, 1);
             obj.heapsize = 0;
-        end %end constructor
-        
+        end
+
         %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
         % Function that tells whether the heap is empty or not
         function isempty = Empty(obj)
-            if obj.heapsize == 0
-                isempty = true;
-            else
-                isempty = false;
-            end
-        end %end Empty
+            isempty = (obj.heapsize == 0);
+        end
         
         %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
         % Return the next event (without removing it from the heap)
         function nextEvent = First(obj)
-            if ~obj.Empty()
-                nextEvent = obj.events_heap(1);
-            else
-                error('Future events list empty. There is no next event.')
+            if obj.Empty()
+                error('Future events list empty. There is no next event.');
             end
-        end %end First
-        
+            nextEvent = obj.events_heap{1};
+        end
+
         %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
         % Add a new event to the heap
         function Enqueue(obj, newEvent)
-            obj.events_heap(end+1) = newEvent;
+            if ~isa(newEvent, 'event')
+                error('Future events list can only store objects derived from event.');
+            end
+
+            if obj.heapsize == obj.capacity
+                obj.grow();
+            end
+
             obj.heapsize = obj.heapsize + 1;
-            obj.rearrangeHeap(obj.heapsize)
-        end %end Enqueue
-        
+            obj.events_heap{obj.heapsize} = newEvent;
+            obj.eventClocks(obj.heapsize) = newEvent.clock;
+            obj.siftUp(obj.heapsize);
+        end
+
         %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
         % Dequeue an event
         function nextEvent = Dequeue(obj)
-            if ~obj.Empty()
-                nextEvent = obj.events_heap(1);
-                obj.events_heap(1) = obj.events_heap(obj.heapsize);
-                obj.events_heap = obj.events_heap(1:end-1);
-                obj.heapsize = obj.heapsize - 1;
-                obj.rearrangeHeap(1);
-            else
-               error('Future events list empty. There is no next event.');
+            if obj.Empty()
+                error('Future events list empty. There is no next event.');
             end
-        end %end Dequeue
-        
-        %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-        % Rearrange the heap after dequeueing an event
-        function rearrangeHeap(obj, i) %obj.heap is a heap except for the i-th position
-            while (i > 1 && obj.events_heap(i).clock < obj.events_heap(Parent(i)).clock)
-                obj.swap(i, Parent(i));
-                i = Parent(i);
-            end %end while
-            while (Left(i) <= obj.heapsize && i ~= BestParentSons(obj, i))
-                best = BestParentSons(obj, i);
-                obj.swap(i, best);
-                i = best;
-            end %end while
-            
-            %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% 
-            % Nested auxiliary functions
-            function parent = Parent(i)
-                parent = floor((i-2)/2) + 1;
-            end %end Parent
-            
-            function left = Left(i)
-                left = 2*i;
-            end %end Left
 
-            function j = BestParentSons(obj, i)
-                j = Left(i);
-                k = j;
-                if (k+1 <= obj.heapsize)
-                    k = k + 1;
+            nextEvent = obj.events_heap{1};
+
+            if obj.heapsize == 1
+                obj.events_heap{1} = [];
+                obj.eventClocks(1) = 0;
+                obj.heapsize = 0;
+                return;
+            end
+
+            obj.events_heap{1} = obj.events_heap{obj.heapsize};
+            obj.eventClocks(1) = obj.eventClocks(obj.heapsize);
+            obj.events_heap{obj.heapsize} = [];
+            obj.eventClocks(obj.heapsize) = 0;
+            obj.heapsize = obj.heapsize - 1;
+            obj.siftDown(1);
+
+            if obj.capacity > obj.DEFAULT_CAPACITY && obj.heapsize <= obj.capacity / 4
+                obj.shrink();
+            end
+        end
+
+    end %end methods
+
+    methods (Access = private)
+        
+        function siftUp(obj, index)
+            while index > 1
+                parent = floor(index / 2);
+                if obj.eventClocks(index) >= obj.eventClocks(parent)
+                    break;
                 end
-                if obj.events_heap(k).clock < obj.events_heap(j).clock
-                    j = k;
+                obj.swap(index, parent);
+                index = parent;
+            end
+        end %end siftUp
+
+        %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+        function siftDown(obj, index)
+            while true
+                left = 2 * index;
+                right = left + 1;
+                smallest = index;
+
+                if left <= obj.heapsize && obj.eventClocks(left) < obj.eventClocks(smallest)
+                    smallest = left;
                 end
-                if obj.events_heap(i).clock <= obj.events_heap(j).clock
-                    j = i;
+
+                if right <= obj.heapsize && obj.eventClocks(right) < obj.eventClocks(smallest)
+                    smallest = right;
                 end
-            end %end BestParentSons
-            
-        end %end rearrangeHeap
+
+                if smallest == index
+                    break;
+                end
+
+                obj.swap(index, smallest);
+                index = smallest;
+            end
+        end
         
         %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-        % Swap two elements of events_heap
         function swap(obj, i, j)
-            tmp = obj.events_heap(i);
-            obj.events_heap(i) = obj.events_heap(j);
-            obj.events_heap(j) = tmp;
+            tmpEvent = obj.events_heap{i};
+            obj.events_heap{i} = obj.events_heap{j};
+            obj.events_heap{j} = tmpEvent;
+
+            tmpClock = obj.eventClocks(i);
+            obj.eventClocks(i) = obj.eventClocks(j);
+            obj.eventClocks(j) = tmpClock;
         end %end swap
-    
-    end %end methods
-    
+
+        %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+        function grow(obj)
+            newCapacity = max(1, obj.capacity * 2);
+            obj.events_heap = [obj.events_heap; cell(newCapacity - obj.capacity, 1)];
+            obj.eventClocks = [obj.eventClocks; zeros(newCapacity - obj.capacity, 1)];
+            obj.capacity = newCapacity;
+        end %end grow
+
+        %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+        function shrink(obj)
+            proposed = max(obj.DEFAULT_CAPACITY, max(obj.heapsize, floor(obj.capacity / 2)));
+
+            if proposed >= obj.capacity
+                return;
+            end
+
+            obj.events_heap = obj.events_heap(1:proposed);
+            obj.eventClocks = obj.eventClocks(1:proposed);
+            obj.capacity = proposed;
+        end %end shrink
+    end %end private methods
 end %end class definition
 

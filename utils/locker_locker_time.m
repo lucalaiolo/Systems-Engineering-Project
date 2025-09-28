@@ -21,7 +21,7 @@ p.addParameter('WriteCSV', true, @(x)islogical(x)&&isscalar(x));
 p.parse(varargin{:});
 outDir   = string(p.Results.OutDir);
 prefix   = string(p.Results.Prefix);
-writeCSV = p.Results.WriteCSV;
+writeCSV = false;
 
 % --- Inputs & checks ---
 coords = data.lockers_coords;

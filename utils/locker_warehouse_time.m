@@ -10,7 +10,7 @@ p.addParameter('WriteFiles', true, @(x)islogical(x)&&isscalar(x));
 p.parse(varargin{:});
 OutDir = string(p.Results.OutDir);
 Prefix = string(p.Results.Prefix);
-WriteFiles = p.Results.WriteFiles;
+WriteFiles = false;
 
 if OutDir == ""
     [fdir,~,~] = fileparts(distCsvFile);
