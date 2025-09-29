@@ -20,7 +20,7 @@ SPEED = 55;
 warehouses = readtable('base_config.xlsx');
 warehouses{:, 'vehicle'} = struct( ...
     'capacity', Inf, ...
-    'dispatchInterval', 10 * 60);
+    'dispatchInterval', 3 * 60);
 
 %% Assemble the modelConfig structure
 modelConfig.orders = orders;
