@@ -40,10 +40,12 @@ function results = locker_warehouse_distances(lockerFile, warehouseFile)
     catch
         warning('Could not write CSV to current folder.');
     end
-
+    
+    %{
     % --------- Plotting ----------
     make_plot(latsL, lonsL, namesL, latsW, lonsW, namesW, idxNearest, minDist);
-
+    %}
+    
     % --------- Return results ----------
     results.D = D;
     results.warehouses_coords = [latsW, lonsW];
