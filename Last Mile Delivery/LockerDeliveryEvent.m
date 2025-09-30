@@ -7,19 +7,22 @@ classdef LockerDeliveryEvent < event
 
     properties
         warehouseId
+        vehicleId
         stopIndex
     end
 
     methods
-        function obj = LockerDeliveryEvent(warehouseId, stopIndex, eventTime)
-            if nargin < 3
-                error('LockerDeliveryEvent requires warehouseId, stopIndex and time.');
+        function obj = LockerDeliveryEvent(warehouseId, vehicleId,stopIndex, eventTime)
+            if nargin < 4
+                error('LockerDeliveryEvent requires warehouseId, vehicleId, stopIndex and time.');
             end
-            label = sprintf('LockerDelivery_W%d_Stop%d', warehouseId, stopIndex);
+            label = sprintf('LockerDelivery_W%d_V%d_Stop%d', warehouseId, vehicleId, stopIndex);
             params.warehouseId = warehouseId;
+            params.vehicleId = vehicleId;
             params.stopIndex = stopIndex;
             obj@event(label, params, eventTime);
             obj.warehouseId = warehouseId;
+            obj.vehicleId = vehicleId;
             obj.stopIndex = stopIndex;
         end
 
@@ -28,7 +31,7 @@ classdef LockerDeliveryEvent < event
         end
 
         function manageEvent(obj, simEngine)
-            simEngine.handleLockerDelivery(obj.warehouseId, obj.stopIndex);
+            simEngine.handleLockerDelivery(obj.warehouseId, obj.vehicleId, obj.stopIndex);
         end
     end
 end

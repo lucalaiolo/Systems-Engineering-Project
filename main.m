@@ -13,7 +13,7 @@ addpath("utils\")
 lockersFile = 'parcel_lockers_stockholm_2.csv';
 warehouseCoordsFile = 'warehouses_locations.xlsx';
 ordersFile = 'stockholm_orders_sept2025.csv';
-SPEED = 85;
+SPEED = 50;
 
 warehousesCoordinates = readtable('warehouses_locations.xlsx');
 [numWarehouses, ~] = size(warehousesCoordinates);
@@ -34,7 +34,7 @@ newWData = table2array(readtable("warehouse_data__New_Warehouses.csv"));
 
 onTimePercentage = zeros(nConfigs, 1);
 
-for i=1:nConfigs
+for i=12:nConfigs
     cfg = configs{i};
     deliveryWindow = zeros(length(cfg), 1); 
     for j=1:length(cfg)
@@ -52,8 +52,9 @@ for i=1:nConfigs
 
     warehouses = readtable('warehouses_locations.xlsx');
     warehouses{:, 'vehicle'} = struct( ...
-        'capacity', Inf, ...
-        'dispatchInterval', 3 * 60);
+        'capacity', 100, ...
+        'dispatchInterval', 60, ...
+        'fleetSize', 10);
     warehouses = warehouses(cfg,:);
     %% Assemble the modelConfig structure
     modelConfig.orders = orders;

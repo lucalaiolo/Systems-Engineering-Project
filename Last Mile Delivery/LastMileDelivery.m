@@ -134,7 +134,35 @@ classdef LastMileDelivery < SimulationEngine
                 end
             end
         end
-            
+        
+        %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+        function lockerStats = getLockerBlockingSummary(obj)
+            %GETLOCKERBLOCKINGSUMMARY Return aggregated locker blocking data.
+            %   The returned struct contains the total number of blocked parcel
+            %   attempts, the total number of delivery attempts and the
+            %   resulting blocking probability for each locker.
+
+            numLockers = obj.config.numLockers;
+            blockedAttempts = zeros(numLockers, 1);
+            totalAttempts = zeros(numLockers, 1);
+            probability = nan(numLockers, 1);
+
+            for l = 1:numLockers
+                field = obj.statNames.lockerBlocking{l};
+                statObj = obj.stats.statistics.(field);
+                blockedAttempts(l) = statObj.sum;
+                totalAttempts(l) = statObj.count;
+                if totalAttempts(l) > 0
+                    probability(l) = blockedAttempts(l) / totalAttempts(l);
+                end
+            end
+
+            lockerStats = struct('blockedAttempts', blockedAttempts, ...
+                'totalAttempts', totalAttempts, 'probability', probability);
+        end
+
+
+
         %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
         function handleOrderArrival(obj, orderIndex)
             %HANDLEORDERARRIVAL Process an order arrival event.
@@ -219,8 +247,8 @@ classdef LastMileDelivery < SimulationEngine
                 obj.scheduleNextDepartureTimer(warehouseId, obj.clock);
             end
 
-            if obj.state.vehicleBusy(warehouseId)
-                return; % Vehicle already on route.
+            if obj.isFleetFullyBusy(warehouseId)
+                return; % All vehicles already on route.
             end
 
             buffer = obj.state.vehicleBuffers{warehouseId};
@@ -239,8 +267,17 @@ classdef LastMileDelivery < SimulationEngine
 
             % Update vehicle utilisation (state change from idle to busy).
             utilField = obj.statNames.vehicleUtilization{warehouseId};
-            obj.stats.update(utilField, obj.state.vehicleBusy(warehouseId));
-            obj.state.vehicleBusy(warehouseId) = true;
+            obj.stats.update(utilField, obj.getVehicleBusyRatio(warehouseId));
+            vehicleId = obj.acquireVehicleSlot(warehouseId);
+            if vehicleId == 0
+                % No idle vehicles available despite previous check; requeue the batch.
+                obj.state.vehicleBuffers{warehouseId} = [orderBatch, obj.state.vehicleBuffers{warehouseId}];
+                obj.maybeScheduleVehicleDeparture(warehouseId);
+                return;
+            end
+            busyVector = obj.state.vehicleBusy{warehouseId};
+            busyVector(vehicleId) = true;
+            obj.state.vehicleBusy{warehouseId} = busyVector;
 
             % Update order status to reflect dispatch.
             for k = 1:numel(orderBatch)
@@ -251,16 +288,19 @@ classdef LastMileDelivery < SimulationEngine
             end
 
             trip = obj.buildVehicleTrip(warehouseId, orderBatch);
-            obj.state.activeTrips{warehouseId} = trip;
+            trip.vehicleId = vehicleId;
+            fleetTrips = obj.state.activeTrips{warehouseId};
+            fleetTrips{vehicleId} = trip;
+            obj.state.activeTrips{warehouseId} = fleetTrips;
 
             % Schedule delivery events for each stop.
             for s = 1:numel(trip.stops)
                 stop = trip.stops(s);
-                obj.eventsList.Enqueue(LockerDeliveryEvent(warehouseId, s, stop.arrivalTime));
+                obj.eventsList.Enqueue(LockerDeliveryEvent(warehouseId, vehicleId, s, stop.arrivalTime));
             end
 
             % Schedule the vehicle return event.
-            obj.eventsList.Enqueue(VehicleReturnEvent(warehouseId, trip.returnTime));
+            obj.eventsList.Enqueue(VehicleReturnEvent(warehouseId, vehicleId, trip.returnTime));
 
             % After dispatching, check whether we can prepare another departure.
             obj.maybeScheduleVehicleDeparture(warehouseId);
@@ -268,10 +308,16 @@ classdef LastMileDelivery < SimulationEngine
         end %end handleVehicleDeparture
         
         %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-        function handleLockerDelivery(obj, warehouseId, stopIndex)
+        function handleLockerDelivery(obj, warehouseId, vehicleId, stopIndex)
             %HANDLELOCKERDELIVERY Deliver a batch of parcels to a locker.
 
-            trip = obj.state.activeTrips{warehouseId};
+            fleetTrips = obj.state.activeTrips{warehouseId};
+            if vehicleId < 1 || vehicleId > numel(fleetTrips)
+                return;
+            end
+
+            trip = fleetTrips{vehicleId};
+
             if isempty(trip) || stopIndex > numel(trip.stops)
                 return;
             end
@@ -349,19 +395,28 @@ classdef LastMileDelivery < SimulationEngine
 
             trip.stops(stopIndex).delivered = deliveredCount;
             trip.stops(stopIndex).blocked = blockedCount;
-            obj.state.activeTrips{warehouseId} = trip;
+            fleetTrips{vehicleId} = trip;
+            obj.state.activeTrips{warehouseId} = fleetTrips;
         end
     
         %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-        function handleVehicleReturn(obj, warehouseId)
+        function handleVehicleReturn(obj, warehouseId, vehicleId)
             %HANDLEVEHICLERETURN Complete a vehicle trip and process undelivered
             %parcels (if any).
+            
+            busyVector = obj.state.vehicleBusy{warehouseId};
+            if vehicleId < 1 || vehicleId > numel(busyVector)
+                obj.maybeScheduleVehicleDeparture(warehouseId);
+                return;
+            end
 
             utilField = obj.statNames.vehicleUtilization{warehouseId};
-            obj.stats.update(utilField, obj.state.vehicleBusy(warehouseId));
-            obj.state.vehicleBusy(warehouseId) = false;
+            obj.stats.update(utilField, obj.getVehicleBusyRatio(warehouseId));
+            busyVector(vehicleId) = false;
+            obj.state.vehicleBusy{warehouseId} = busyVector;
 
-            trip = obj.state.activeTrips{warehouseId};
+            fleetTrips = obj.state.activeTrips{warehouseId};
+            trip = fleetTrips{vehicleId};
             if isempty(trip)
                 obj.maybeScheduleVehicleDeparture(warehouseId);
                 return;
@@ -377,7 +432,8 @@ classdef LastMileDelivery < SimulationEngine
                 end
             end
 
-            obj.state.activeTrips{warehouseId} = [];
+            fleetTrips{vehicleId} = [];
+            obj.state.activeTrips{warehouseId} = fleetTrips;
 
             % After returning, check whether another departure is possible.
             obj.maybeScheduleVehicleDeparture(warehouseId);
@@ -467,21 +523,70 @@ classdef LastMileDelivery < SimulationEngine
             %MAYBESCHEDULEVEHICLEDEPARTURE Schedule a capacity-triggered departure
             %when the buffer is full and the vehicle is available.
 
-            if obj.state.vehicleBusy(warehouseId)
+            if obj.isFleetFullyBusy(warehouseId)
                 return;
             end
 
             buffer = obj.state.vehicleBuffers{warehouseId};
             capacity = obj.config.warehouses(warehouseId).vehicle.capacity;
-            if numel(buffer) >= capacity && ~obj.state.vehicleCapacityTriggerScheduled(warehouseId)
+            if ~isfinite(capacity) || capacity <= 0
+                capacityThreshold = 1;
+            else
+                capacityThreshold = capacity;
+            end
+            
+            if numel(buffer) >= capacityThreshold && ~obj.state.vehicleCapacityTriggerScheduled(warehouseId)
                 obj.state.vehicleCapacityTriggerScheduled(warehouseId) = true;
                 obj.eventsList.Enqueue(VehicleDepartureEvent(warehouseId, 'capacity', obj.clock));
             end
         end %end maybeScheduleVehicleDeparture
 
         %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+        function vehicleId = acquireVehicleSlot(obj, warehouseId)
+            %ACQUIREVEHICLESLOT Return the index of the first idle vehicle.
+            busyVector = obj.state.vehicleBusy{warehouseId};
+            vehicleId = find(~busyVector, 1, 'first');
+            if isempty(vehicleId)
+                vehicleId = 0;
+            end
+        end
+
+        %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+        function flag = isFleetFullyBusy(obj, warehouseId)
+            %ISFLEETFULLYBUSY Check whether all vehicles from a warehouse are busy.
+            busyVector = obj.state.vehicleBusy{warehouseId};
+            if isempty(busyVector)
+                flag = false;
+            else
+                flag = all(busyVector);
+            end
+        end
+
+        %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+        function ratio = getVehicleBusyRatio(obj, warehouseId)
+            %GETVEHICLEBUSYRATIO Fraction of vehicles currently busy.
+            busyVector = obj.state.vehicleBusy{warehouseId};
+            fleetSize = obj.config.warehouses(warehouseId).vehicle.fleetSize;
+            if isempty(fleetSize) || fleetSize < 1
+                fleetSize = 1;
+            end
+            denom = max(1, fleetSize);
+            if isempty(busyVector)
+                ratio = 0;
+            else
+                ratio = sum(busyVector) / denom;
+            end
+        end
+
+        %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
         function trip = buildVehicleTrip(obj, warehouseId, orderBatch)
             %BUILDVEHICLETRIP Create the route description for the dispatched batch.
+            %   Vehicles follow a simple cyclic routing policy: each vehicle starts
+            %   from its warehouse, visits lockers according to the predefined
+            %   base route (skipping those without pending parcels) and finally
+            %   returns to the warehouse. This lightweight policy enables several
+            %   vehicles per depot to operate concurrently without solving a full
+            %   routing optimisation problem.
 
             vehicleCfg = obj.config.warehouses(warehouseId).vehicle;
             assignedLockers = obj.config.warehouses(warehouseId).assignedLockers;
@@ -1036,6 +1141,20 @@ classdef LastMileDelivery < SimulationEngine
                 if ~isfield(vehicle, 'initialOffset')
                     vehicle.initialOffset = vehicle.dispatchInterval;
                 end
+                if isfield(vehicle, 'fleetSize') && ~isempty(vehicle.fleetSize)
+                    fleetSize = vehicle.fleetSize;
+                elseif isfield(vehicle, 'numVehicles') && ~isempty(vehicle.numVehicles)
+                    fleetSize = vehicle.numVehicles;
+                elseif isfield(vehicle, 'vehicles') && ~isempty(vehicle.vehicles)
+                    fleetSize = vehicle.vehicles;
+                else
+                    fleetSize = 1;
+                end
+                if ~isscalar(fleetSize) || isnan(fleetSize)
+                    fleetSize = 1;
+                end
+                fleetSize = max(1, round(double(fleetSize)));
+                vehicle.fleetSize = fleetSize;
 
                 warehouses(w).vehicle = vehicle;
 
@@ -1186,7 +1305,7 @@ classdef LastMileDelivery < SimulationEngine
             warehouseQueueLengths = zeros(1, numWarehouses);
             warehouseInService = zeros(1, numWarehouses);
             vehicleBuffers = cell(1, numWarehouses);
-            vehicleBusy = false(1, numWarehouses);
+            vehicleBusy = cell(1, numWarehouses);
             vehicleCapacityTriggerScheduled = false(1, numWarehouses);
             vehicleNextScheduledDeparture = inf(1, numWarehouses);
             activeTrips = cell(1, numWarehouses);
@@ -1196,7 +1315,12 @@ classdef LastMileDelivery < SimulationEngine
             for w = 1:numWarehouses
                 warehouseQueues{w} = [];
                 vehicleBuffers{w} = [];
-                activeTrips{w} = [];
+                fleetSize = parsed.config.warehouses(w).vehicle.fleetSize;
+                if isempty(fleetSize) || fleetSize < 1
+                    fleetSize = 1;
+                end
+                vehicleBusy{w} = false(1, fleetSize);
+                activeTrips{w} = cell(1, fleetSize);
             end
             for l = 1:numLockers
                 initialOcc = parsed.config.lockers(l).initialOccupancy;
