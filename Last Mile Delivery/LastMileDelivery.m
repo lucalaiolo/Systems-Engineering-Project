@@ -1,7 +1,7 @@
 classdef LastMileDelivery < SimulationEngine
     %LASTMILEDELIVERY Discrete-event simulator for the last-mile delivery system.
     %   The model leverages the MATDES library to represent the interaction
-    %   between warehouses (single-server queues fed by an empirical order
+    %   between warehouses (infinite-server queues fed by an empirical order
     %   stream), capacitated vehicles operating batched delivery routes and
     %   parcel lockers with stochastic customer pick-ups. The class orchestrates
     %   the creation of events, maintains the system state and collects key
@@ -106,7 +106,7 @@ classdef LastMileDelivery < SimulationEngine
         function generateReport(obj)
             %GENERATEREPORT Custom report summarising the main performance
             %indicators along with the statistics managed by MATDES.
-            %{
+            
             fprintf('Simulation ended.');
             fprintf('Total orders delivered: %d / %d', obj.completedOrders, obj.totalOrders);
             fprintf('Total blocked parcels returned: %d', obj.blockedParcels);
@@ -134,8 +134,7 @@ classdef LastMileDelivery < SimulationEngine
                 end
             end
         end
-            %}
-        end
+            
         %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
         function handleOrderArrival(obj, orderIndex)
             %HANDLEORDERARRIVAL Process an order arrival event.
@@ -152,18 +151,9 @@ classdef LastMileDelivery < SimulationEngine
             oldQueueLength = obj.state.warehouseQueueLengths(warehouseId);
             obj.stats.update(queueField, oldQueueLength);
 
-            if obj.state.warehouseInService(warehouseId) == 0
-                % Server idle, start service immediately.
-                obj.startWarehouseService(warehouseId, orderIndex);
-            else
-                % Enqueue the order.
-                queue = obj.state.warehouseQueues{warehouseId};
-                queue(end+1) = orderIndex; 
-                obj.state.warehouseQueues{warehouseId} = queue;
-                obj.state.warehouseQueueLengths(warehouseId) = oldQueueLength + 1;
-            end
-
-            obj.orders(orderIndex).status = "waiting";
+            % In an M/M/inf setting every order can begin service immediately,
+            % therefore no waiting queue is maintained.
+            obj.startWarehouseService(warehouseId, orderIndex);
 
             % Schedule the next arrival from the empirical stream.
             if orderIndex < obj.totalOrders
@@ -181,7 +171,7 @@ classdef LastMileDelivery < SimulationEngine
                 return;
             end
 
-            obj.state.warehouseInService(warehouseId) = 0;
+            obj.state.warehouseInService(warehouseId) = max(0, obj.state.warehouseInService(warehouseId) - 1);
             obj.orders(orderIndex).serviceCompletionTime = obj.clock;
             obj.orders(orderIndex).status = "staged";
             
@@ -451,11 +441,13 @@ classdef LastMileDelivery < SimulationEngine
         function startWarehouseService(obj, warehouseId, orderIndex)
             %STARTWAREHOUSESERVICE Begin service for the specified order.
             
-            % Mark the warehouse server as busy. The order identifier is
-            % already carried by the scheduled completion event, therefore we
-            % only need a boolean flag here.
             obj.state.warehouseInService(warehouseId) = 1;
             
+            % Increase the number of orders currently in service at the
+            % warehouse. The order identifier is already carried by the
+            % scheduled completion event, therefore we just track the count.
+            obj.state.warehouseInService(warehouseId) = obj.state.warehouseInService(warehouseId) + 1;
+
             obj.orders(orderIndex).serviceStartTime = obj.clock;
             obj.orders(orderIndex).status = "inService";
 
@@ -606,7 +598,8 @@ classdef LastMileDelivery < SimulationEngine
             end
             
             pickupDelay = obj.orders(orderIdx).pickupDelay;
-            nextTime = currentTime + pickupDelay * 60;
+            % nextTime = currentTime + pickupDelay * 60;
+            nextTime = currentTime + 1; 
             if ~isfinite(nextTime)
                 return;
             end

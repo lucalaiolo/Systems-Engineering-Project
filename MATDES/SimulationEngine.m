@@ -64,6 +64,7 @@ classdef SimulationEngine < handle
                 % Update the system state and schedule the next event
                 % The statistics will be update inside this function
                 nextEvent.manageEvent(obj);
+                disp(obj.clock);
             end
             % Print a report
             obj.generateReport();

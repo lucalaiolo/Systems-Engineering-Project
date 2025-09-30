@@ -58,6 +58,7 @@ for i=1:nConfigs
     %% Assemble the modelConfig structure
     modelConfig.orders = orders;
     modelConfig.lockers = lockers;
+    %modelConfig.lockers{:,4} = modelConfig.lockers{:, 4} * 10;
     modelConfig.warehouses = warehouses;
     
     travelTimes.warehouseToLocker = T_LW_minutes';
