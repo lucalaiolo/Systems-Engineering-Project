@@ -106,7 +106,7 @@ classdef LastMileDelivery < SimulationEngine
         function generateReport(obj)
             %GENERATEREPORT Custom report summarising the main performance
             %indicators along with the statistics managed by MATDES.
-
+            %{
             fprintf('Simulation ended.');
             fprintf('Total orders delivered: %d / %d', obj.completedOrders, obj.totalOrders);
             fprintf('Total blocked parcels returned: %d', obj.blockedParcels);
@@ -134,7 +134,8 @@ classdef LastMileDelivery < SimulationEngine
                 end
             end
         end
-
+            %}
+        end
         %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
         function handleOrderArrival(obj, orderIndex)
             %HANDLEORDERARRIVAL Process an order arrival event.
@@ -449,11 +450,12 @@ classdef LastMileDelivery < SimulationEngine
         %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
         function startWarehouseService(obj, warehouseId, orderIndex)
             %STARTWAREHOUSESERVICE Begin service for the specified order.
-
+            
             % Mark the warehouse server as busy. The order identifier is
             % already carried by the scheduled completion event, therefore we
             % only need a boolean flag here.
             obj.state.warehouseInService(warehouseId) = 1;
+            
             obj.orders(orderIndex).serviceStartTime = obj.clock;
             obj.orders(orderIndex).status = "inService";
 
@@ -843,7 +845,8 @@ classdef LastMileDelivery < SimulationEngine
             if ~isfield(modelConfig, 'warehouses')
                 error('modelConfig must contain a ''warehouses'' field.');
             end
-            warehouses = LastMileDelivery.prepareWarehouses(modelConfig.warehouses, orders, lockers);
+            warehouses = LastMileDelivery.prepareWarehouses(modelConfig.warehouses, ...
+                orders, lockers, modelConfig.serviceTimesFiles, modelConfig.wCfg);
 
             numWarehouses = numel(warehouses);
             numLockers = numel(lockers);
@@ -969,7 +972,7 @@ classdef LastMileDelivery < SimulationEngine
         end %end prepareOrders
         
         %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-        function warehouses = prepareWarehouses(input, orders, lockers)
+        function warehouses = prepareWarehouses(input, orders, lockers, files, cfg)
             if istable(input)
                 raw = table2struct(input);
             elseif isstruct(input)
@@ -982,6 +985,9 @@ classdef LastMileDelivery < SimulationEngine
             warehouses = repmat(struct('id', '', 'serviceTime', [], 'vehicle', struct(), 'assignedLockers', [], 'name', ''), numW, 1);
 
             lockerIds = arrayfun(@(l) l.id, lockers);
+            
+            ex = readtable(files{1});
+            new = readtable(files{2});
 
             for w = 1:numW
                 entry = raw(w);
@@ -1003,7 +1009,18 @@ classdef LastMileDelivery < SimulationEngine
                 elseif isfield(entry, 'serviceMean') && ~isempty(entry.serviceMean)
                     warehouses(w).serviceTime = struct('type', 'deterministic', 'value', entry.serviceMean);
                 else
-                    warehouses(w).serviceTime = struct('type', 'lognormal', 'mu', log(5), 'sigma', 0.5);
+                    id = cfg(w);
+                    if id < 3
+                        warehouses(w).serviceTime = struct(...
+                            'type', 'lognormal', ...
+                            'mu', log(ex{id, 3} * 60), ...
+                            'sigma', 0.5);
+                    else
+                        warehouses(w).serviceTime = struct(...
+                            'type', 'lognormal', ...
+                            'mu', log(new{id, 5} * 60), ...
+                            'sigma', 0.5);
+                    end
                 end
 
                 if isfield(entry, 'vehicle') && ~isempty(entry.vehicle)
@@ -1021,7 +1038,7 @@ classdef LastMileDelivery < SimulationEngine
                     vehicle.handlingTimePerStop = 0;
                 end
                 if ~isfield(vehicle, 'handlingTimePerParcel')
-                    vehicle.handlingTimePerParcel = 0;
+                    vehicle.handlingTimePerParcel = 1/7;
                 end
                 if ~isfield(vehicle, 'initialOffset')
                     vehicle.initialOffset = vehicle.dispatchInterval;

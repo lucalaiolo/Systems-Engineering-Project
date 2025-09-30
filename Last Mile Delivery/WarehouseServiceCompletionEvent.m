@@ -4,7 +4,7 @@ classdef WarehouseServiceCompletionEvent < event
     %   order finishes at a warehouse. The completion makes the order available
     %   for loading on a vehicle and potentially frees the warehouse server so
     %   that the next waiting order can begin service.
-
+    
     properties
         warehouseId   % identifier of the warehouse where service completes
         orderIndex    % index of the order that just completed service
