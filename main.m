@@ -22,12 +22,13 @@ configs{end+1} = [1, 2]';
 for i=3:numWarehouses
     configs{end+1} = [1, 2, i]';
 end
+%{
 for i=3:numWarehouses
     for j=(i+1):numWarehouses
         configs{end+1} = [1,2,i,j]';
     end
 end
-
+%}
 nConfigs = length(configs);
 existingWData = table2array(readtable("warehouse_data__Existing_Warehouses.csv"));
 newWData = table2array(readtable("warehouse_data__New_Warehouses.csv"));
@@ -39,7 +40,7 @@ for idx = 1:nConfigs
     configCosts(idx) = computeConfigurationCost(configs{idx}, existingWData, newWData);
 end
 
-nReplications = 2; % Number of simulation replications per configuration
+nReplications = 10; % Number of simulation replications per configuration
 onTimePercentage = nan(nConfigs, nReplications);
 simulationResults = repmat(struct( ...
     'config', [], ...
@@ -122,7 +123,7 @@ for i=1:nConfigs
                 inTime = inTime + 1;
             end
         end
-        onTimePercentage(i, replication) = inTime / nOrders;
+        onTi mePercentage(i, replication) = inTime / nOrders;
     end
 
     simulationResults(i).config = cfg;

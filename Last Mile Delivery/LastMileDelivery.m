@@ -594,34 +594,149 @@ classdef LastMileDelivery < SimulationEngine
                 trip = struct('orders', orderBatch, 'stops', [], 'undeliveredOrders', [], 'returnTime', obj.clock);
                 return;
             end
-            
+            if ~isfield(vehicleCfg,'originType') || isempty(vehicleCfg.originType)
+                vehicleCfg.originType = 'warehouse';
+            end
+            if ~isfield(vehicleCfg,'returnToOrigin') || isempty(vehicleCfg.returnToOrigin)
+                vehicleCfg.returnToOrigin = true;
+            end
+            if strcmpi(vehicleCfg.originType,'locker')
+                if ~isfield(vehicleCfg,'originLockerId') || isempty(vehicleCfg.originLockerId)
+                    error('originType is "locker" but originLockerId is not set.');
+                end
+                originLockerId = vehicleCfg.originLockerId;
+            end
             batchSize = length(orderBatch);
             lockerIds = zeros(batchSize, 1);
-            for i=1:batchSize
+            for i = 1:batchSize
                 lockerIds(i) = obj.orders(orderBatch(i)).lockerId;
             end
-
-            uniqueLockers = unique(lockerIds);
-
-            if isfield(vehicleCfg, 'route') && ~isempty(vehicleCfg.route)
-                baseRoute = vehicleCfg.route(:)';
-            else
-                baseRoute = assignedLockers(:)';
+            activeLockers = unique(lockerIds(:))';
+            if isempty(activeLockers)
+                trip = struct('orders', orderBatch, 'stops', [], 'undeliveredOrders', [], 'returnTime', obj.clock);
+                return;
             end
-
-            orderPositions = arrayfun(@(x) find(baseRoute == x, 1, 'first'), uniqueLockers);
-            % Handle lockers that might not be in the base route by appending them.
-            for u = 1:numel(uniqueLockers)
-                if isempty(orderPositions(u))
-                    baseRoute(end+1) = uniqueLockers(u);
-                    orderPositions(u) = numel(baseRoute);
+            nStops = numel(activeLockers);
+            N = nStops + 1;
+            D = inf(N,N);
+            for i = 1:N
+                for j = 1:N
+                    if i == j
+                        continue
+                    end
+                    if i == 1 && j > 1
+                        tgt = activeLockers(j-1);
+                        if strcmpi(vehicleCfg.originType,'warehouse')
+                            D(i,j) = max(obj.travelTimes.warehouseToLocker(warehouseId, tgt),0);
+                        else
+                            D(i,j) = max(obj.travelTimes.lockerToLocker(originLockerId, tgt),0);
+                        end
+                    elseif i > 1 && j == 1
+                        src = activeLockers(i-1);
+                        if strcmpi(vehicleCfg.originType,'warehouse')
+                            if isfield(obj.travelTimes,'lockerToWarehouse')
+                                D(i,j) = max(obj.travelTimes.lockerToWarehouse(src, warehouseId),0);
+                            else
+                                D(i,j) = max(obj.travelTimes.warehouseToLocker(warehouseId, src),0);
+                            end
+                        else
+                            D(i,j) = max(obj.travelTimes.lockerToLocker(src, originLockerId),0);
+                        end
+                    else
+                        src = activeLockers(i-1);
+                        tgt = activeLockers(j-1);
+                        D(i,j) = max(obj.travelTimes.lockerToLocker(src, tgt),0);
+                    end
                 end
             end
-
-            [~, sortIdx] = sort(orderPositions);
-            stopOrder = uniqueLockers(sortIdx);
-
-            % Build stop list preserving the FIFO order for parcels to the same locker.
+            idx = [];
+            I = [];
+            J = [];
+            for i = 1:N
+                for j = 1:N
+                    if i ~= j
+                        idx(end+1) = numel(idx)+1; 
+                        I(end+1) = i;
+                        J(end+1) = j;
+                    end
+                end
+            end
+            nArcs = numel(idx);
+            f = zeros(nArcs,1);
+            for k = 1:nArcs
+                f(k) = D(I(k),J(k));
+            end
+            Aeq = zeros(2*N, nArcs);
+            beq = ones(2*N,1);
+            for i = 1:N
+                row = i;
+                cols = find(I == i);
+                Aeq(row, cols) = 1;
+            end
+            for j = 1:N
+                row = N + j;
+                cols = find(J == j);
+                Aeq(row, cols) = 1;
+            end
+            Aineq = [];
+            bineq = [];
+            lb = zeros(nArcs + (N-1),1);
+            ub = ones(nArcs + (N-1),1);
+            ub(nArcs+1:end) = N;
+            lb(nArcs+1:end) = 2;
+            intcon = 1:nArcs;
+            for ii = 2:N
+                for jj = 2:N
+                    if ii == jj
+                        continue
+                    end
+                    row = zeros(1, nArcs + (N-1));
+                    arcCols = find(I == ii & J == jj);
+                    if ~isempty(arcCols)
+                        row(arcCols) = N;
+                    end
+                    row(nArcs + (ii-1)) = 1;
+                    row(nArcs + (jj-1)) = -1;
+                    Aineq = [Aineq; row];
+                    bineq = [bineq; N-1]; 
+                end
+            end
+            opt = optimoptions('intlinprog','Display','off');
+            [sol,~,exitflag] = intlinprog(f,intcon, Aineq,bineq, Aeq,beq, lb,ub, opt);
+            if exitflag <= 0
+                baseRoute = assignedLockers(:)';
+                orderPositions = arrayfun(@(x) find(baseRoute == x, 1, 'first'), activeLockers);
+                for u = 1:numel(activeLockers)
+                    if isempty(orderPositions(u))
+                        baseRoute(end+1) = activeLockers(u);
+                        orderPositions(u) = numel(baseRoute);
+                    end
+                end
+                [~, sortIdx] = sort(orderPositions);
+                stopOrder = activeLockers(sortIdx);
+            else
+                x = sol(1:nArcs) > 0.5;
+                succ = zeros(1,N);
+                for k = 1:nArcs
+                    if x(k)
+                        succ(I(k)) = J(k);
+                    end
+                end
+                route = zeros(1,N+1);
+                route(1) = 1;
+                for t = 2:N+1
+                    route(t) = succ(route(t-1));
+                    if route(t) == 0
+                        break
+                    end
+                    if route(t) == 1 && t < N+1
+                        route = route(1:t);
+                        break
+                    end
+                end
+                tour = route(2:end-1);
+                stopOrder = activeLockers(tour-1);
+            end
             stops = repmat(struct('lockerId', 0, 'orderIndices', [], 'arrivalTime', 0, 'delivered', 0, 'blocked', 0), 1, numel(stopOrder));
             for s = 1:numel(stopOrder)
                 locker = stopOrder(s);
@@ -629,19 +744,21 @@ classdef LastMileDelivery < SimulationEngine
                 stops(s).lockerId = locker;
                 stops(s).orderIndices = orderBatch(mask);
             end
-
             currentTime = obj.clock;
             prevLocker = 0;
             for s = 1:numel(stops)
                 locker = stops(s).lockerId;
                 if prevLocker == 0
-                    travelTime = obj.travelTimes.warehouseToLocker(warehouseId, locker);
+                    if strcmpi(vehicleCfg.originType,'warehouse')
+                        travelTime = obj.travelTimes.warehouseToLocker(warehouseId, locker);
+                    else
+                        travelTime = obj.travelTimes.lockerToLocker(originLockerId, locker);
+                    end
                 else
                     travelTime = obj.travelTimes.lockerToLocker(prevLocker, locker);
                 end
                 currentTime = currentTime + max(travelTime, 0);
                 stops(s).arrivalTime = currentTime;
-
                 handlingBase = 0;
                 if isfield(vehicleCfg, 'handlingTimePerStop') && ~isempty(vehicleCfg.handlingTimePerStop)
                     handlingBase = vehicleCfg.handlingTimePerStop;
@@ -659,14 +776,25 @@ classdef LastMileDelivery < SimulationEngine
                 currentTime = currentTime + max(serviceTime, 0);
                 prevLocker = locker;
             end
-
             if prevLocker == 0
                 returnTime = currentTime;
             else
-                returnTravel = obj.travelTimes.warehouseToLocker(warehouseId, prevLocker);
-                returnTime = currentTime + max(returnTravel, 0);
+                if vehicleCfg.returnToOrigin
+                    if strcmpi(vehicleCfg.originType,'warehouse')
+                        if isfield(obj.travelTimes, 'lockerToWarehouse')
+                            returnTravel = obj.travelTimes.lockerToWarehouse(prevLocker, warehouseId);
+                        else
+                            returnTravel = obj.travelTimes.warehouseToLocker(warehouseId, prevLocker);
+                        end
+                        returnTime = currentTime + max(returnTravel, 0);
+                    else
+                        returnTravel = obj.travelTimes.lockerToLocker(prevLocker, originLockerId);
+                        returnTime = currentTime + max(returnTravel, 0);
+                    end
+                else
+                    returnTime = currentTime;
+                end
             end
-
             trip.orders = orderBatch;
             trip.stops = stops;
             trip.undeliveredOrders = [];
@@ -703,8 +831,7 @@ classdef LastMileDelivery < SimulationEngine
             end
             
             pickupDelay = obj.orders(orderIdx).pickupDelay;
-            % nextTime = currentTime + pickupDelay * 60;
-            nextTime = currentTime + 1; 
+            nextTime = currentTime + pickupDelay * 60; 
             if ~isfinite(nextTime)
                 return;
             end
@@ -1116,7 +1243,7 @@ classdef LastMileDelivery < SimulationEngine
                     else
                         warehouses(w).serviceTime = struct(...
                             'type', 'lognormal', ...
-                            'mu', log(new{id, 5} * 60), ...
+                            'mu', log(new{id - 2, 5} * 60), ...
                             'sigma', 0.5);
                     end
                 end
